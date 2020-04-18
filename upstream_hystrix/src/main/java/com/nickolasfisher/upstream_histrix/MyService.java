@@ -1,18 +1,31 @@
 package com.nickolasfisher.upstream_histrix;
 
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixCommand;
-import com.netflix.hystrix.contrib.javanica.annotation.HystrixException;
 import com.netflix.hystrix.contrib.javanica.annotation.HystrixProperty;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
+
+import java.time.Duration;
 
 @Component
 public class MyService {
 
-    private final RestTemplate restTemplate;
+    private final RestTemplate shortRestTemplate;
+    private final RestTemplate longRestTemplate;
 
-    public MyService(RestTemplate restTemplate) {
-        this.restTemplate = restTemplate;
+    private static final Logger LOG = LoggerFactory.getLogger(MyService.class);
+
+    public MyService(RestTemplateBuilder builder) {
+        this.shortRestTemplate = builder.setReadTimeout(Duration.ofMillis(500))
+                .setConnectTimeout(Duration.ofMillis(500))
+                .build();
+
+        this.longRestTemplate = builder.setReadTimeout(Duration.ofMillis(2000))
+                .setConnectTimeout(Duration.ofMillis(2000))
+                .build();
     }
 
     /*
@@ -22,15 +35,31 @@ public class MyService {
         even stranger at first glance.
      */
     @HystrixCommand(commandProperties = {
-            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "500")
+            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "2000")
     },
-            raiseHystrixExceptions = HystrixException.RUNTIME_EXCEPTION,
-    fallbackMethod = "fallback")
-    public String getDownstream() {
-        return this.restTemplate.getForEntity("http://localhost:9100/downstream", String.class).getBody();
+            threadPoolKey = "prim",
+            fallbackMethod = "fallback")
+    public String getDownstream(String uuid) {
+        LOG.info("inside getDownstream with: {}", uuid);
+        return this.longRestTemplate.getForEntity("http://localhost:9100/downstream", String.class).getBody();
     }
 
-    private String fallback() {
+    private String fallback(String uuid) {
+//        LOG.info("fallback executed: {}", Thread.currentThread().getName());
         return "fallback";
+    }
+
+    private String otherFallback(String uuid) {
+        return "fallback-other";
+    }
+
+    @HystrixCommand(commandProperties = {
+            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "2000")
+    },
+            threadPoolKey = "other",
+    fallbackMethod = "otherFallback")
+    public String getOtherDownstream(String uuid) {
+        LOG.info("inside getOtherDownstream with: {}", uuid);
+        return this.longRestTemplate.getForEntity("http://localhost:9100/downstream", String.class).getBody();
     }
 }

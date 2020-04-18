@@ -1,0 +1,114 @@
+## Observations
+
+### `execution.isolation.thread.timeoutInMilliseconds`
+
+If you set the timeout on the rest template to 1 second, and set 
+
+`@HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "500")`
+
+any request that takes, e.g. 750 ms, will be considered a failure and the fallback method will
+be invoked.
+
+### Threading
+
+With:
+
+```
+@GetMapping("/upstream")
+public String getSomething() {
+    UUID uuid = UUID.randomUUID();
+    LOG.info("request: {}", uuid);
+    String downstream = this.myService.getDownstream(uuid.toString());
+    LOG.info("response: {}", uuid);
+    return downstream;
+}
+```
+
+and `myService` having:
+
+```
+@HystrixCommand(commandProperties = {
+        @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "500")
+},
+fallbackMethod = "fallback")
+public String getDownstream(String uuid) {
+    LOG.info("inside getDownstream with: {}", uuid);
+    return this.restTemplate.getForEntity("http://localhost:9100/downstream", String.class).getBody();
+}
+```
+
+You will get logs like:
+
+```
+2020-04-18 13:57:51.610  INFO 20251 --- [nio-8080-exec-7] c.n.upstream_histrix.MyController        : request: 4cee9fd6-c429-4850-bd72-aeff4be19e9b
+2020-04-18 13:57:51.718  INFO 20251 --- [rix-MyService-4] c.n.upstream_histrix.MyService           : inside getDownstream with: 4cee9fd6-c429-4850-bd72-aeff4be19e9b
+2020-04-18 13:57:52.191  INFO 20251 --- [nio-8080-exec-7] c.n.upstream_histrix.MyController        : response: 4cee9fd6-c429-4850-bd72-aeff4be19e9b
+```
+
+The original thread kicks off the other thread and watches it (vice-versa?). It will then kill the thread if something is wrong with it.
+
+## How to acheive hread pool isolation
+
+With two endpoints that call different
+
+```
+@GetMapping("/upstream")
+public String getSomething() {
+    UUID uuid = UUID.randomUUID();
+    LOG.info("request: {}", uuid);
+    String downstream = this.myService.getDownstream(uuid.toString());
+    LOG.info("response: {}", uuid);
+    return downstream;
+}
+
+@GetMapping("/other/upstream")
+public String getOther() {
+    UUID uuid = UUID.randomUUID();
+    LOG.info("request getOther: {}", uuid);
+    String downstream = this.myService.getOtherDownstream(uuid.toString());
+    LOG.info("response getOther: {}", uuid);
+    return downstream;
+}
+```
+
+And the same annotations over hystrix commands:
+
+```
+    @HystrixCommand(commandProperties = {
+            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "1500")
+    },
+    fallbackMethod = "fallback")
+    public String getDownstream(String uuid) { ... }
+
+
+    @HystrixCommand(commandProperties = {
+            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "1500")
+    },
+    fallbackMethod = "otherFallback")
+    public String getOtherDownstream(String uuid) { ... }
+```
+
+It appears to _use the same common threadpool between both of them by default_. When I spam both endpoints simulateously,
+I always get at most 10 good responses. This makes sense since at most 10 requests can be in flight at once.
+
+If I change the thread pool prefix that changes, and they each get their own threadpools:
+
+```
+@HystrixCommand(commandProperties = {
+        @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "1500")
+},
+        threadPoolKey = "prim",
+        fallbackMethod = "fallback")
+public String getDownstream(String uuid) { ... }
+
+
+@HystrixCommand(commandProperties = {
+        @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "1500")
+},
+        threadPoolKey = "other",
+fallbackMethod = "otherFallback")
+public String getOtherDownstream(String uuid) { ... } 
+
+```
+
+Then I can get 10 good responses from each endpoint when I'm hitting both at the same time.
