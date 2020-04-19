@@ -158,3 +158,6 @@ See https://github.com/Netflix/Hystrix/wiki/Configuration
 - execution.isolation.thread.timeoutInMilliseconds: 1000
 - circuitBreaker.requestVolumeThreshold: 20
 - hystrix.command.default.circuitBreaker.sleepWindowInMilliseconds: 5000 (blocks all requests)
+- circuitBreakerErrorThresholdPercentage: 5 seconds. The circuit stays open for this period of time, 
+and will let one request through after it concludes. If it fails, the circuit goes to closed again, if successful
+then the circuit is re-opened.
