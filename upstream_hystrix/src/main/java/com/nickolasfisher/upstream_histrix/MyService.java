@@ -35,17 +35,23 @@ public class MyService {
         even stranger at first glance.
      */
     @HystrixCommand(commandProperties = {
-            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "2000")
+            @HystrixProperty(name = "execution.isolation.thread.timeoutInMilliseconds", value = "2000"),
+            @HystrixProperty(name = "circuitBreaker.requestVolumeThreshold", value = "40")
+//            @HystrixProperty(name = "fallback.isolation.semaphore.maxConcurrentRequests", value = "20")
     },
             threadPoolKey = "prim",
+            threadPoolProperties = {
+                    @HystrixProperty(name = "coreSize", value = "10")
+            },
             fallbackMethod = "fallback")
     public String getDownstream(String uuid) {
         LOG.info("inside getDownstream with: {}", uuid);
         return this.longRestTemplate.getForEntity("http://localhost:9100/downstream", String.class).getBody();
     }
 
-    private String fallback(String uuid) {
-//        LOG.info("fallback executed: {}", Thread.currentThread().getName());
+    private String fallback(String uuid, Throwable t) {
+        LOG.warn("ex: {}", t.getClass());
+        LOG.warn("Thrown: {}", t.getMessage());
         return "fallback";
     }
 

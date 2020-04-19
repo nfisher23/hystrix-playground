@@ -47,7 +47,7 @@ You will get logs like:
 
 The original thread kicks off the other thread and watches it (vice-versa?). It will then kill the thread if something is wrong with it.
 
-## How to acheive hread pool isolation
+## How to acheive thread pool isolation
 
 With two endpoints that call different
 
@@ -112,3 +112,49 @@ public String getOtherDownstream(String uuid) { ... }
 ```
 
 Then I can get 10 good responses from each endpoint when I'm hitting both at the same time.
+
+## Tripping the circuit
+
+When I run the `tripTheCircuit` method and change the upstream hystrix application fallback to have code like:
+
+```
+private String fallback(String uuid, Throwable t) {
+    LOG.warn("ex: {}", t.getClass());
+    LOG.warn("Thrown: {}", t.getMessage());
+    return "fallback";
+}
+```
+
+You will see exactly 10 logs like this with the default settings:
+
+```
+2020-04-18 16:46:06.282  WARN 6511 --- [io-8080-exec-20] c.n.upstream_histrix.MyService           : ex: class java.util.concurrent.RejectedExecutionException
+2020-04-18 16:46:06.283  WARN 6511 --- [nio-8080-exec-4] c.n.upstream_histrix.MyService           : Thrown: Task java.util.concurrent.FutureTask@8bfbc5b[Not completed, task = java.util.concurrent.Executors$RunnableAdapter@727bd80b[Wrapped task = null]] rejected from java.util.concurrent.ThreadPoolExecutor@6debb9d7[Running, pool size = 10, active threads = 10, queued tasks = 0, completed tasks = 0]
+```
+
+The next logs that you'll see are:
+
+```
+2020-04-18 16:46:08.928  WARN 6511 --- [io-8080-exec-20] c.n.upstream_histrix.MyService           : ex: class java.lang.RuntimeException
+2020-04-18 16:46:08.929  WARN 6511 --- [io-8080-exec-20] c.n.upstream_histrix.MyService           : Thrown: Hystrix circuit short-circuited and is OPEN
+```
+
+### Tweaking the circuit tripping behavior
+
+If I then add this property to the `getDownstream` annotation:
+
+```
+@HystrixProperty(name = "circuitBreaker.requestVolumeThreshold", value = "40")
+```
+
+I can get 20 successful responses before the circuit trips. It sets the minimum number of requests
+in a rolling window required to trip the circuit. So if 39 total requests are made and they all fail,
+the circuit is still not open, even though there's a 100% failure rate.
+
+### Important defaults you will probably have to change:
+
+See https://github.com/Netflix/Hystrix/wiki/Configuration
+
+- execution.isolation.thread.timeoutInMilliseconds: 1000
+- circuitBreaker.requestVolumeThreshold: 20
+- hystrix.command.default.circuitBreaker.sleepWindowInMilliseconds: 5000 (blocks all requests)
